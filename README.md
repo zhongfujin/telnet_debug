@@ -1,4 +1,4 @@
-# telnet_debug
+# telnet debug :you can telnet your process and execute the function that you input oin shell
 telnet_debug
 编译进入build目录，执行cmake ../ && make
 会生成libtelnet_dbg.so和telent_test
