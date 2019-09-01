@@ -19,8 +19,9 @@
 #define MOVE_RIGHT              "\033[C"
 #define MOVE_LEFT               "\033[D"
 #define CTRL_C                  "\003"
-#define CLEAR_RIGHT_CHAR        "\033[OK"
+#define CLEAR_RIGHT_CHAR        "\033[K"
 #define CLEAR_LEFT_CHAR         "\033[1K"
+#define KEY_RCP					"\033[u"
 
 #define BUFSIZE 1024
 #define DEBUG_PORT  19000
@@ -333,7 +334,7 @@ void *shell_thread_func(void *arg)
     unsigned int ii = 0;
     unsigned int jj = 0;
     char *init_str = "\r\nWelcome to telnet debug terminal\r\n";
-    
+    int i = 0;
     cmd_buf = malloc(MAX_CMD_LEN);
     if(cmd_buf == NULL)
     {
@@ -405,15 +406,26 @@ void *shell_thread_func(void *arg)
         
         if(cmd_line[0] == 0x08 || cmd_line[0] == 0x7f)
         {
-            
-            keyboard_backsapce(tel_mgr,cmd_buf,strlen(cmd_buf));
-            
-            if(tel_mgr->move_left_num == 0)
+            if(strlen(cmd_buf) == tel_mgr->move_left_num)
             {
-                write_certain_bytes(tel_mgr->fd_conn," ",1);
+            	continue;
             }
-            ret = sprintf(light,"\033[%dD",tel_mgr->move_left_num);
-            write_certain_bytes(tel_mgr->fd_conn,light,ret);
+			write_certain_bytes(tel_mgr->fd_conn,"\010 \010",strlen("\010 \010"));
+            keyboard_backsapce(tel_mgr,cmd_buf,strlen(cmd_buf));
+
+			if(tel_mgr->move_left_num)
+			{
+				for(i = 0; i < tel_mgr->move_left_num;i++)
+				{
+					write_certain_bytes(tel_mgr->fd_conn,MOVE_LEFT,strlen(MOVE_LEFT));
+				}
+            	/*ret = sprintf(light,"\033[%dD",tel_mgr->move_left_num);
+            	write_certain_bytes(tel_mgr->fd_conn,light,ret);*/
+			}
+			else
+			{
+            	write_certain_bytes(tel_mgr->fd_conn,MOVE_LEFT,strlen(MOVE_LEFT));
+			}
             continue;
         }
         
@@ -560,31 +572,34 @@ void keyboard_backsapce(TELNET_MGR *tel_mgr,char *cmd,unsigned int len)
     {
         return;
     }
+	int i = 0;
     char buf[MAX_CMD_LEN] = {'\0'};
 
-    if(tel_mgr->move_left_num != 0)
+    if(tel_mgr->move_left_num > 0)
     {
         write_certain_bytes(tel_mgr->fd_conn,CLEAR_RIGHT_CHAR,strlen(CLEAR_RIGHT_CHAR));
-        memmove(cmd + (len - 1 - tel_mgr->move_left_num),
-                     cmd + (len - tel_mgr->move_left_num),tel_mgr->move_left_num);
+        memmove(cmd + (len - 1 - tel_mgr->move_left_num),cmd + (len - tel_mgr->move_left_num),tel_mgr->move_left_num);
         cmd[len - 1] = '\0';
+		/*write_certain_bytes(tel_mgr->fd_conn,CLEAR_LEFT_CHAR,strlen(CLEAR_LEFT_CHAR));
+    	sprintf(buf,"\r%s%s",DEBUG_SHELL,cmd);
+    	write_certain_bytes(tel_mgr->fd_conn,buf,strlen(buf));
+		write_certain_bytes(tel_mgr->fd_conn," ",1);*/
+		write_certain_bytes(tel_mgr->fd_conn,cmd + (len - 1 - tel_mgr->move_left_num),tel_mgr->move_left_num);
+		
     }
     
     else
     {
         cmd[len - 1] = '\0';
+		write_certain_bytes(tel_mgr->fd_conn," ",1);
     }
-    write_certain_bytes(tel_mgr->fd_conn," ",1);
-    write_certain_bytes(tel_mgr->fd_conn,CLEAR_LEFT_CHAR,strlen(CLEAR_LEFT_CHAR));
-    sprintf(buf,"\r%s%s",DEBUG_SHELL,cmd);
- 
-    write_certain_bytes(tel_mgr->fd_conn,buf,strlen(buf));
-    
+	
 }
 
 
 void insert_char(TELNET_MGR *tel_mgr,char *cmd,unsigned int len,char c)
 {
+	int i = 0;
     if(len <= 0 || len > MAX_CMD_LEN - 1)
     {
         return;
@@ -595,15 +610,17 @@ void insert_char(TELNET_MGR *tel_mgr,char *cmd,unsigned int len,char c)
     unsigned int ret = 0;
     if(tel_mgr->move_left_num > 0 && tel_mgr->move_left_num <= len)
     {
-        memmove(cmd + (len - tel_mgr->move_left_num + 1),
-                     cmd + (len -  tel_mgr->move_left_num),tel_mgr->move_left_num);
+    	write_certain_bytes(tel_mgr->fd_conn," ",1);
+        memmove(cmd + (len - tel_mgr->move_left_num + 1),cmd + (len -  tel_mgr->move_left_num),tel_mgr->move_left_num);
         cmd[len -  tel_mgr->move_left_num] = c;
         cmd[len + 1] = '\0';
         write_certain_bytes(tel_mgr->fd_conn,CLEAR_LEFT_CHAR,strlen(CLEAR_LEFT_CHAR));
         ret = sprintf(buf,"\r%s%s",DEBUG_SHELL,cmd);
         write_certain_bytes(tel_mgr->fd_conn,buf,ret);
-        ret = sprintf(light,"\033[%dD",tel_mgr->move_left_num);
-        write_certain_bytes(tel_mgr->fd_conn,light,ret);
+        for(int i = 0;i < tel_mgr->move_left_num;i++)
+        {
+        	write_certain_bytes(tel_mgr->fd_conn,MOVE_LEFT,strlen(MOVE_LEFT));
+        }
         return;
     }
 }
