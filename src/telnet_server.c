@@ -18,9 +18,15 @@
 #define MOVE_DOWN               "\033[B"
 #define MOVE_RIGHT              "\033[C"
 #define MOVE_LEFT               "\033[D"
-#define CTRL_C                  "\003"
 #define CLEAR_RIGHT_CHAR        "\033[K"
 #define CLEAR_LEFT_CHAR         "\033[1K"
+#define CLEAR_LINE				"\033[2K"
+#define LOC_START				"\033[0;0H"
+#define CLEAR_TERM        		"\033[2J"
+#define CTRL_C                  "\003"
+#define CTRL_L					12
+
+
 #define KEY_RCP					"\033[u"
 
 #define BUFSIZE 1024
@@ -28,7 +34,7 @@
 
 #define DEBUG_SHELL "[debug_shell]#"
 
-/*the telnet server*/
+/*the telnet server,for socket creat and accept connection*/
 unsigned int telnet_ser()
 {
     int ret = 0;
@@ -53,9 +59,7 @@ unsigned int telnet_ser()
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr  = htonl(INADDR_ANY);
     server_addr.sin_port = htons(DEBUG_PORT);
-   
-    
-    
+
     server = socket(AF_INET,SOCK_STREAM,0);
     if(server < 0)
     {
@@ -82,7 +86,7 @@ unsigned int telnet_ser()
         max_fd = server;
 
         tv.tv_sec = 0;
-        tv.tv_usec = 200000;
+        tv.tv_usec = 20000;
         
         count = select(max_fd + 1,&rfdset,NULL,NULL,&tv);
         if(count <= 0)
@@ -173,7 +177,8 @@ unsigned int read_certain_bytes(unsigned int fd, void *buf, size_t count)
     return 0;
 }
 
-/*accept a connection*/
+/*accept a connection,and create a manager data for client.
+will make a new thread and session for this connection*/
 void process_thread(int fd)
 {
     unsigned int fd_accept = fd;
@@ -322,7 +327,8 @@ unsigned int telnetd_remove_iac(char *pbuf, unsigned int uiLen)
   
 }
 
-/*the work thread*/
+/*the work thread,will recv the input from telnet client,
+and keyboard,achieve the up,down,right,left,backspace and so on*/
 void *shell_thread_func(void *arg)
 {
     unsigned int ret = 0;
@@ -374,6 +380,18 @@ void *shell_thread_func(void *arg)
             memset(cmd_buf,0,MAX_CMD_LEN);
             continue;
         }
+
+		if(cmd_line[0] == CTRL_L)
+		{
+			write_certain_bytes(tel_mgr->fd_conn,CLEAR_TERM,strlen(CLEAR_TERM));
+			write_certain_bytes(tel_mgr->fd_conn,"\033[0;0H",strlen("\033[0;0H"));
+			write_certain_bytes(tel_mgr->fd_conn,"\033[2K",strlen("\033[2K"));
+			memset(cmd_buf,0,MAX_CMD_LEN);
+            sprintf(cmd_buf,"\r\n%s",DEBUG_SHELL);
+			write_certain_bytes(tel_mgr->fd_conn,cmd_buf,strlen(cmd_buf));
+            memset(cmd_buf,0,MAX_CMD_LEN);
+			continue;
+		}
         
         if(cmd_line[0] == 0x1b && cmd_line[1] == 0x5b && cmd_line[2] == 0x41)
         {
@@ -419,8 +437,6 @@ void *shell_thread_func(void *arg)
 				{
 					write_certain_bytes(tel_mgr->fd_conn,MOVE_LEFT,strlen(MOVE_LEFT));
 				}
-            	/*ret = sprintf(light,"\033[%dD",tel_mgr->move_left_num);
-            	write_certain_bytes(tel_mgr->fd_conn,light,ret);*/
 			}
 			else
 			{
@@ -428,6 +444,24 @@ void *shell_thread_func(void *arg)
 			}
             continue;
         }
+
+		if(cmd_line[0] == '?')
+		{
+			telnet_terminal_help(tel_mgr->fd_conn);
+			write_certain_bytes(tel_mgr->fd_conn,CLEAR_RIGHT_CHAR,strlen(CLEAR_RIGHT_CHAR));
+			write_certain_bytes(tel_mgr->fd_conn,DEBUG_SHELL,strlen(DEBUG_SHELL));
+			continue;
+		}
+
+		if(cmd_line[0] == '\t')
+		{
+			write_certain_bytes(tel_mgr->fd_conn,"help\r\n",strlen("help\r\n"));
+			write_certain_bytes(tel_mgr->fd_conn,CLEAR_RIGHT_CHAR,strlen(CLEAR_RIGHT_CHAR));
+			write_certain_bytes(tel_mgr->fd_conn,DEBUG_SHELL,strlen(DEBUG_SHELL));
+			continue;
+		}
+
+		
         
         if((tel_mgr->move_left_num > 0) && (strlen(cmd_buf) > 0) && (32 <= cmd_line[0]) && (cmd_line[0] <= 127))
         {
@@ -465,6 +499,8 @@ CMD_OVER:
                 if(strcmp("quit",cmd_buf) == 0 || strcmp("exit",cmd_buf) == 0)
                 {
                     close(tel_mgr->fd_conn);
+					free(cmd_buf);
+					free(tel_mgr);
                     return NULL;
                 }
                 
@@ -496,12 +532,9 @@ CMD_OVER:
                 cmd_buf[jj] = cmd_line[ii];
                 cmd_buf[jj + 1] = '\0';
             }
-
         }
-        
     }
     return NULL;
-    
 }
 
 /*update the history cmd*/
@@ -580,12 +613,8 @@ void keyboard_backsapce(TELNET_MGR *tel_mgr,char *cmd,unsigned int len)
         write_certain_bytes(tel_mgr->fd_conn,CLEAR_RIGHT_CHAR,strlen(CLEAR_RIGHT_CHAR));
         memmove(cmd + (len - 1 - tel_mgr->move_left_num),cmd + (len - tel_mgr->move_left_num),tel_mgr->move_left_num);
         cmd[len - 1] = '\0';
-		/*write_certain_bytes(tel_mgr->fd_conn,CLEAR_LEFT_CHAR,strlen(CLEAR_LEFT_CHAR));
-    	sprintf(buf,"\r%s%s",DEBUG_SHELL,cmd);
-    	write_certain_bytes(tel_mgr->fd_conn,buf,strlen(buf));
-		write_certain_bytes(tel_mgr->fd_conn," ",1);*/
 		write_certain_bytes(tel_mgr->fd_conn,cmd + (len - 1 - tel_mgr->move_left_num),tel_mgr->move_left_num);
-		
+
     }
     
     else
@@ -610,17 +639,13 @@ void insert_char(TELNET_MGR *tel_mgr,char *cmd,unsigned int len,char c)
     unsigned int ret = 0;
     if(tel_mgr->move_left_num > 0 && tel_mgr->move_left_num <= len)
     {
-    	write_certain_bytes(tel_mgr->fd_conn," ",1);
+    	//write_certain_bytes(tel_mgr->fd_conn," ",1);
         memmove(cmd + (len - tel_mgr->move_left_num + 1),cmd + (len -  tel_mgr->move_left_num),tel_mgr->move_left_num);
         cmd[len -  tel_mgr->move_left_num] = c;
-        cmd[len + 1] = '\0';
-        write_certain_bytes(tel_mgr->fd_conn,CLEAR_LEFT_CHAR,strlen(CLEAR_LEFT_CHAR));
-        ret = sprintf(buf,"\r%s%s",DEBUG_SHELL,cmd);
-        write_certain_bytes(tel_mgr->fd_conn,buf,ret);
-        for(int i = 0;i < tel_mgr->move_left_num;i++)
-        {
-        	write_certain_bytes(tel_mgr->fd_conn,MOVE_LEFT,strlen(MOVE_LEFT));
-        }
+        //cmd[len + 1] = '\0';
+        write_certain_bytes(tel_mgr->fd_conn,"\033[1@",strlen("\033[1@"));
+		write_certain_bytes(tel_mgr->fd_conn,cmd + len -  tel_mgr->move_left_num,1);
+ 
         return;
     }
 }
@@ -666,6 +691,22 @@ unsigned int telnet_reg_log()
 }
 
 
+int write_str(int fd,char *str)
+{
+	return write_certain_bytes(fd,str,strlen(str));
+}
+
+void telnet_terminal_help(int fd)
+{
+	write_str(fd,"\r\nshow		--show command");
+	write_str(fd,"\r\nnode		--enter node mode");
+	write_str(fd,"\r\ncomp		--enter comp mode");
+	write_str(fd,"\r\nproc		--enter proc mode");
+	write_str(fd,"\r\nCtrl + L	--clear the terminal");
+	write_str(fd,"\r\ndebug		--enter debug mode");
+	write_str(fd,"\r\n");
+	
+}
 
 
 
